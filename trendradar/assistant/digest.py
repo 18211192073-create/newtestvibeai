@@ -148,6 +148,8 @@ SOURCE_PRIORITY_RULES = [
     ("openai blog", 24.0),
     ("openai x", 23.0),
     ("openai", 22.0),
+    ("grok", 21.0),
+    ("gemini", 20.0),
     ("anthropic", 20.0),
     ("google deepmind", 20.0),
     ("deepmind", 18.0),
@@ -258,6 +260,45 @@ TECH_CONTEXT_KEYWORDS = [
     "代码",
 ]
 
+FOCUS_TOPIC_KEYWORDS = [
+    "ai",
+    "人工智能",
+    "大模型",
+    "llm",
+    "agent",
+    "智能体",
+    "代码",
+    "编程",
+    "github",
+    "skill",
+    "skills",
+    "推理",
+    "rag",
+    "模型",
+    "api",
+    "sdk",
+    "openai",
+    "anthropic",
+    "grok",
+    "gemini",
+    "deepmind",
+    "copilot",
+]
+
+SOCIAL_NOISE_KEYWORDS = [
+    "市民",
+    "公益",
+    "热议",
+    "社会新闻",
+    "社会话题",
+    "校园",
+    "婚恋",
+    "情感",
+    "故事",
+    "明星",
+    "搞笑",
+]
+
 _AUTO_REFRESH_ATTEMPTED = False
 
 
@@ -311,15 +352,16 @@ def load_assistant_settings(path: str = "config/assistant.yaml") -> Dict[str, An
                 "yahoo-finance",
             ],
             "title_keywords": AI_KEYWORDS,
+            "focus_keywords": FOCUS_TOPIC_KEYWORDS,
         },
         "source_priority": {
             "enabled": True,
         },
         "source_mix": {
             "enabled": True,
-            "english_authority": 0.45,
-            "chinese_ai_tech": 0.35,
-            "hotlist_trend": 0.20,
+            "english_authority": 0.55,
+            "chinese_ai_tech": 0.30,
+            "hotlist_trend": 0.15,
             "english_patterns": DEFAULT_ENGLISH_AUTHORITY_PATTERNS,
             "chinese_patterns": DEFAULT_CHINESE_AI_TECH_PATTERNS,
             "hotlist_patterns": DEFAULT_HOTLIST_TREND_PATTERNS,
@@ -396,6 +438,20 @@ def _contains_any(text: str, keywords: List[str]) -> bool:
     return any(keyword and keyword.lower() in lowered for keyword in keywords)
 
 
+def _focus_topic_hit(text: str, focus_keywords: List[str]) -> bool:
+    weak_tokens = {"ai", "人工智能"}
+    normalized = [str(keyword).strip() for keyword in focus_keywords if str(keyword).strip()]
+    strong_terms = [term for term in normalized if term.lower() not in weak_tokens]
+    if _contains_any(text, strong_terms):
+        return True
+    if _contains_any(text, ["ai", "人工智能"]) and _contains_any(
+        text,
+        ["大模型", "llm", "agent", "智能体", "代码", "github", "skill", "skills", "开源", "推理", "模型", "api", "sdk"],
+    ):
+        return True
+    return False
+
+
 def _source_priority_boost(source_name: str, source_id: str, source_priority: Optional[Dict[str, Any]] = None) -> float:
     source_priority = source_priority or {}
     if source_priority.get("enabled", True) is False:
@@ -433,9 +489,9 @@ def _source_mix_config(assistant_settings: Optional[Dict[str, Any]]) -> Dict[str
     raw = assistant_settings.get("source_mix", {}) or {}
     return {
         "enabled": bool(raw.get("enabled", True)),
-        "english_authority": float(raw.get("english_authority", 0.45)),
-        "chinese_ai_tech": float(raw.get("chinese_ai_tech", 0.35)),
-        "hotlist_trend": float(raw.get("hotlist_trend", 0.20)),
+        "english_authority": float(raw.get("english_authority", 0.55)),
+        "chinese_ai_tech": float(raw.get("chinese_ai_tech", 0.30)),
+        "hotlist_trend": float(raw.get("hotlist_trend", 0.15)),
         "english_patterns": list(raw.get("english_patterns", DEFAULT_ENGLISH_AUTHORITY_PATTERNS) or []),
         "chinese_patterns": list(raw.get("chinese_patterns", DEFAULT_CHINESE_AI_TECH_PATTERNS) or []),
         "hotlist_patterns": list(raw.get("hotlist_patterns", DEFAULT_HOTLIST_TREND_PATTERNS) or []),
@@ -547,7 +603,16 @@ def _apply_source_mix(
         selected.append(candidate)
         selected_ids.add(candidate.item_id)
 
-    return sorted(selected[:limit], key=lambda item: (item.importance_hint, item.published_at), reverse=True)
+    def score(item: DigestCandidate) -> Tuple[float, str]:
+        bucket = _categorize_source_kind(item, mix_cfg)
+        bucket_bonus = {
+            "english_authority": 8.0,
+            "chinese_ai_tech": 2.0,
+            "hotlist_trend": 0.0,
+        }.get(bucket, 0.0)
+        return (item.importance_hint + bucket_bonus, item.published_at)
+
+    return sorted(selected[:limit], key=score, reverse=True)
 
 
 def _is_tech_source(source_name: str) -> bool:
@@ -584,9 +649,11 @@ def _is_ai_related(title: str, source_name: str, source_id: str, assistant_sourc
     title_keywords = assistant_sources.get("title_keywords", []) or []
     tech_keywords = assistant_sources.get("tech_keywords", []) or []
     exclude_keywords = assistant_sources.get("exclude_keywords", []) or []
+    focus_keywords = assistant_sources.get("focus_keywords", []) or []
 
     combined_keywords = list(dict.fromkeys([*title_keywords, *tech_keywords, *AI_KEYWORDS, *TECH_KEYWORDS]))
     text_blob = f"{title} {source_name}"
+    source_blob = f"{source_name} {source_id}"
 
     if _contains_any(text_blob, exclude_keywords):
         return False
@@ -596,12 +663,21 @@ def _is_ai_related(title: str, source_name: str, source_id: str, assistant_sourc
 
     strong_ai_hit = _contains_any(title, AI_KEYWORDS)
     strong_tech_hit = _contains_any(title, ["芯片", "半导体", "算力", "机器人", "自动驾驶", "云计算", "开源", "编程", "软件", "模型", "RAG", "AIGC", "推理"])
+    focus_hit = _focus_topic_hit(title, list(dict.fromkeys([*FOCUS_TOPIC_KEYWORDS, *focus_keywords])))
+    social_noise_hit = _contains_any(title, SOCIAL_NOISE_KEYWORDS)
     weak_brand_hit = _contains_any(title, WEAK_BRAND_KEYWORDS)
     tech_context_hit = _contains_any(title, TECH_CONTEXT_KEYWORDS)
     source_bias = source_id in platform_ids or source_id in rss_ids
     source_hint = _is_tech_source(source_name)
+    english_authority_hit = _match_any_pattern(source_blob, DEFAULT_ENGLISH_AUTHORITY_PATTERNS)
 
-    if strong_ai_hit or strong_tech_hit:
+    if social_noise_hit and not (focus_hit or source_hint or english_authority_hit):
+        return False
+
+    if strong_ai_hit and not (focus_hit or tech_context_hit or source_hint or source_bias or english_authority_hit):
+        return False
+
+    if strong_ai_hit or strong_tech_hit or focus_hit:
         return True
 
     if weak_brand_hit and tech_context_hit:

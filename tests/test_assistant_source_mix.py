@@ -5,6 +5,7 @@ from trendradar.assistant.digest import (
     _apply_source_mix,
     _categorize_source_kind,
     _compute_mix_targets,
+    _is_ai_related,
     _source_mix_config,
     _source_priority_boost,
 )
@@ -31,17 +32,17 @@ class SourceMixTests(unittest.TestCase):
         self.settings = {
             "source_mix": {
                 "enabled": True,
-                "english_authority": 0.45,
-                "chinese_ai_tech": 0.35,
-                "hotlist_trend": 0.20,
+                "english_authority": 0.55,
+                "chinese_ai_tech": 0.30,
+                "hotlist_trend": 0.15,
             }
         }
 
     def test_compute_mix_targets_for_eight(self) -> None:
         mix_cfg = _source_mix_config(self.settings)
         targets = _compute_mix_targets(8, mix_cfg)
-        self.assertEqual(targets["english_authority"], 4)
-        self.assertEqual(targets["chinese_ai_tech"], 3)
+        self.assertEqual(targets["english_authority"], 5)
+        self.assertEqual(targets["chinese_ai_tech"], 2)
         self.assertEqual(targets["hotlist_trend"], 1)
 
     def test_apply_source_mix_prefers_balanced_buckets(self) -> None:
@@ -79,8 +80,8 @@ class SourceMixTests(unittest.TestCase):
             bucket_counts[_categorize_source_kind(item, mix_cfg)] += 1
 
         self.assertEqual(len(selected), 8)
-        self.assertEqual(bucket_counts["english_authority"], 4)
-        self.assertEqual(bucket_counts["chinese_ai_tech"], 3)
+        self.assertEqual(bucket_counts["english_authority"], 5)
+        self.assertEqual(bucket_counts["chinese_ai_tech"], 2)
         self.assertEqual(bucket_counts["hotlist_trend"], 1)
 
     def test_apply_source_mix_backfills_when_bucket_insufficient(self) -> None:
@@ -108,6 +109,40 @@ class SourceMixTests(unittest.TestCase):
         }
         self.assertGreaterEqual(_source_priority_boost("Custom Source", "custom-id", config), 9)
         self.assertLessEqual(_source_priority_boost("知乎", "zhihu", config), -12)
+
+    def test_source_priority_boost_supports_grok_and_gemini(self) -> None:
+        self.assertGreater(_source_priority_boost("xAI Grok", "grok-news"), 0)
+        self.assertGreater(_source_priority_boost("Google Gemini", "gemini-blog"), 0)
+
+    def test_apply_source_mix_places_english_authority_near_top(self) -> None:
+        candidates = [
+            _candidate("hot1", "hotlist", "知乎", "zhihu", 100),
+            _candidate("en1", "rss", "OpenAI News", "openai-news", 96),
+            _candidate("en2", "rss", "Anthropic News", "anthropic-news", 95),
+            _candidate("en3", "rss", "Google DeepMind", "deepmind-blog", 94),
+            _candidate("en4", "rss", "The Verge", "the-verge", 93),
+            _candidate("en5", "rss", "xAI Grok", "grok-news", 92),
+            _candidate("cn1", "rss", "机器之心", "jiqizhixin", 91),
+            _candidate("cn2", "rss", "36氪", "36kr", 90),
+        ]
+        selected = _apply_source_mix(candidates, 8, self.settings)
+        self.assertEqual(selected[0].source_name, "OpenAI News")
+
+    def test_is_ai_related_rejects_social_ai_news_without_focus(self) -> None:
+        assistant_sources = {
+            "platform_ids": [],
+            "rss_ids": [],
+            "title_keywords": [],
+            "tech_keywords": [],
+            "exclude_keywords": [],
+        }
+        related = _is_ai_related(
+            title="某地 AI 公益活动引发市民热议",
+            source_name="本地社会新闻",
+            source_id="local-news",
+            assistant_sources=assistant_sources,
+        )
+        self.assertFalse(related)
 
 
 if __name__ == "__main__":

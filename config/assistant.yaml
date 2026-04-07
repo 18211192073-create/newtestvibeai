@@ -59,6 +59,30 @@ sources:
     - AIGC
     - Copilot
     - Meta AI
+    - Grok
+    - Gemini
+
+  # 聚焦主题词：用于进一步把内容集中到 AI / 大模型 / 代码 / Agent / GitHub / Skills
+  focus_keywords:
+    - AI
+    - 大模型
+    - LLM
+    - Agent
+    - 智能体
+    - 代码
+    - 编程
+    - GitHub
+    - Skill
+    - Skills
+    - 推理
+    - RAG
+    - API
+    - SDK
+    - OpenAI
+    - Anthropic
+    - Grok
+    - Gemini
+    - DeepMind
 
   # 科技相关补充词：用于捕捉 AI 以外但仍属于科技主航道的内容
   tech_keywords:
@@ -109,6 +133,8 @@ source_priority:
     openai blog: 24
     openai x: 23
     openai: 22
+    grok: 21
+    gemini: 20
     anthropic: 20
     google deepmind: 20
     deepmind: 18
@@ -127,11 +153,11 @@ source_priority:
 
 source_mix:
   # 候选来源配比（用于送入模型前的候选池结构）
-  # 英文权威源 45% / 中文 AI科技源 35% / 热榜泛趋势 20%
+  # 英文权威源 55% / 中文 AI科技源 30% / 热榜泛趋势 15%
   enabled: true
-  english_authority: 0.45
-  chinese_ai_tech: 0.35
-  hotlist_trend: 0.20
+  english_authority: 0.55
+  chinese_ai_tech: 0.30
+  hotlist_trend: 0.15
   english_patterns:
     - openai
     - anthropic
