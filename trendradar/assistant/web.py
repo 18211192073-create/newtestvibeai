@@ -24,8 +24,8 @@ from .storage import AssistantStorage
 class AssistantHTTPRequestHandler(BaseHTTPRequestHandler):
     storage = AssistantStorage()
     assistant_settings = load_assistant_settings()
-    dashboard_path = Path("output/assistant/latest-report.html")
-    latest_json_path = Path("output/assistant/latest-report.json")
+    dashboard_path = storage.data_dir / "latest-report.html"
+    latest_json_path = storage.data_dir / "latest-report.json"
 
     def _send_json(self, payload: Dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -253,7 +253,7 @@ class AssistantHTTPRequestHandler(BaseHTTPRequestHandler):
 
 def run_server(host: str = "0.0.0.0", port: int = 8080) -> None:
     """启动 AI 助手网页服务。"""
-    Path("output/assistant").mkdir(parents=True, exist_ok=True)
+    AssistantHTTPRequestHandler.storage.data_dir.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((host, port), AssistantHTTPRequestHandler)
     print(f"[Assistant Web] 已启动: http://127.0.0.1:{port}")
     print(f"[Assistant Web] 日报生成入口: http://127.0.0.1:{port}/api/generate")

@@ -423,6 +423,12 @@ def _resolve_ai_api_key(*env_names: str) -> str:
     return ""
 
 
+def _assistant_output_dir() -> Path:
+    if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+        return Path(os.environ.get("DAY_VIBE_DATA_DIR", "/tmp/day-vibe-ai/assistant"))
+    return Path(os.environ.get("DAY_VIBE_DATA_DIR", "output/assistant"))
+
+
 @dataclass
 class DigestCandidate:
     item_id: str
@@ -1788,7 +1794,7 @@ def build_daily_digest(
 
 
 def _write_latest_report_files(report: Dict[str, Any]) -> None:
-    output_dir = Path("output/assistant")
+    output_dir = _assistant_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     latest_json = output_dir / "latest-report.json"
     latest_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1798,7 +1804,7 @@ def _write_latest_report_files(report: Dict[str, Any]) -> None:
 
 
 def _write_debug_artifact(name: str, content: str) -> None:
-    output_dir = Path("output/assistant")
+    output_dir = _assistant_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / name).write_text(content, encoding="utf-8")
 

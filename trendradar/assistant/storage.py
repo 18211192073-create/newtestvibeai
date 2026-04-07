@@ -8,6 +8,7 @@ DAY VIBE AI 的本地存储。
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,11 +25,17 @@ class BookmarkRecord:
     note: str = ""
 
 
+def _default_data_dir() -> Path:
+    if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+        return Path(os.environ.get("DAY_VIBE_DATA_DIR", "/tmp/day-vibe-ai/assistant"))
+    return Path(os.environ.get("DAY_VIBE_DATA_DIR", "output/assistant"))
+
+
 class AssistantStorage:
     """DAY VIBE AI 的 SQLite 存储。"""
 
-    def __init__(self, data_dir: str = "output/assistant") -> None:
-        self.data_dir = Path(data_dir)
+    def __init__(self, data_dir: str | Path | None = None) -> None:
+        self.data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "assistant.db"
         self._init_schema()
