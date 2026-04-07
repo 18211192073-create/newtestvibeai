@@ -299,6 +299,119 @@ SOCIAL_NOISE_KEYWORDS = [
     "搞笑",
 ]
 
+EN_TO_CN_TITLE_TOKEN_MAP = {
+    "launches": "发布",
+    "launch": "发布",
+    "released": "发布",
+    "release": "发布",
+    "announces": "宣布",
+    "announce": "宣布",
+    "adds": "新增",
+    "add": "新增",
+    "introduces": "推出",
+    "introduce": "推出",
+    "new": "新",
+    "model": "模型",
+    "models": "模型",
+    "agent": "智能体",
+    "agents": "智能体",
+    "coding": "代码",
+    "code": "代码",
+    "github": "GitHub",
+    "skill": "技能",
+    "skills": "技能",
+    "orchestration": "编排",
+    "enterprise": "企业",
+    "api": "API",
+    "sdk": "SDK",
+    "update": "更新",
+    "for": "面向",
+    "with": "结合",
+}
+
+EN_BRAND_TOKENS = {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "deepmind": "DeepMind",
+    "google": "Google",
+    "gemini": "Gemini",
+    "grok": "Grok",
+    "meta": "Meta",
+    "github": "GitHub",
+}
+
+AUTHORITY_SOURCE_RULES = [
+    ("openai", 36.0),
+    ("anthropic", 34.0),
+    ("google deepmind", 34.0),
+    ("deepmind", 32.0),
+    ("grok", 32.0),
+    ("gemini", 30.0),
+    ("xai", 30.0),
+    ("meta ai", 28.0),
+    ("google blog", 28.0),
+    ("the verge", 24.0),
+    ("wired", 24.0),
+    ("axios", 24.0),
+    ("techcrunch", 22.0),
+    ("hacker news", 20.0),
+    ("机器之心", 18.0),
+    ("量子位", 17.0),
+    ("极客", 16.0),
+    ("36氪", 15.0),
+]
+
+NOISE_SOURCE_RULES = [
+    ("tieba", -35.0),
+    ("贴吧", -35.0),
+    ("zhihu", -15.0),
+    ("知乎", -15.0),
+    ("weibo", -18.0),
+    ("微博", -18.0),
+    ("douyin", -20.0),
+    ("抖音", -20.0),
+    ("bilibili", -10.0),
+    ("百度热搜", -10.0),
+]
+
+FRONTIER_TECH_KEYWORDS = [
+    "大模型",
+    "llm",
+    "foundation model",
+    "agent",
+    "智能体",
+    "推理",
+    "inference",
+    "benchmark",
+    "api",
+    "sdk",
+    "github",
+    "代码",
+    "编程",
+    "开源",
+    "芯片",
+    "gpu",
+    "cuda",
+    "h100",
+    "算力",
+    "grok",
+    "gemini",
+    "openai",
+    "anthropic",
+    "deepmind",
+]
+
+SENSATIONAL_NOISE_KEYWORDS = [
+    "跳脚",
+    "怒怼",
+    "炸锅",
+    "引爆全网",
+    "血洗",
+    "崩了",
+    "硬刚",
+    "爆火",
+]
+
 _AUTO_REFRESH_ATTEMPTED = False
 
 
@@ -438,6 +551,134 @@ def _contains_any(text: str, keywords: List[str]) -> bool:
     return any(keyword and keyword.lower() in lowered for keyword in keywords)
 
 
+def _is_likely_english_title(title: str) -> bool:
+    text = _normalize_text(title)
+    if not text:
+        return False
+    if _contains_cjk(text):
+        return False
+    letters = re.findall(r"[A-Za-z]", text)
+    return len(letters) >= 4
+
+
+def _fallback_translate_title_to_chinese(title: str) -> str:
+    normalized = _normalize_text(title)
+    if not normalized:
+        return ""
+    if _contains_cjk(normalized):
+        return normalized
+
+    pieces = re.findall(r"[A-Za-z0-9+#.-]+", normalized)
+    translated_parts: List[str] = []
+    mapped_cn_count = 0
+    for piece in pieces:
+        key = piece.lower()
+        if key in EN_TO_CN_TITLE_TOKEN_MAP:
+            mapped = EN_TO_CN_TITLE_TOKEN_MAP[key]
+            translated_parts.append(mapped)
+            if _contains_cjk(mapped):
+                mapped_cn_count += 1
+            continue
+        if key in EN_BRAND_TOKENS:
+            translated_parts.append(EN_BRAND_TOKENS[key])
+
+    fallback = " ".join(translated_parts).strip()
+    if fallback and _contains_cjk(fallback) and mapped_cn_count >= 3:
+        return fallback
+    return f"英文资讯：{_truncate(normalized, 80)}"
+
+
+def _translate_titles_to_chinese(titles: List[str], assistant_settings: Optional[Dict[str, Any]] = None) -> List[str]:
+    if not titles:
+        return []
+
+    assistant_settings = assistant_settings or {}
+    ai_cfg = assistant_settings.get("ai", {}) or {}
+    api_key = _resolve_ai_api_key(
+        ai_cfg.get("api_key_env", "VOLC_API_KEY"),
+        "AI_API_KEY",
+        "OPENAI_API_KEY",
+        "VOLC_API_KEY",
+    )
+    if not api_key:
+        return []
+
+    ai_client = AIClient(
+        {
+            "MODEL": ai_cfg.get("model", "openai/doubao-seed-2-0-code-preview-260215"),
+            "API_KEY": api_key,
+            "API_BASE": ai_cfg.get("api_base", "https://ark.cn-beijing.volces.com/api/v3"),
+            "TIMEOUT": min(int(ai_cfg.get("timeout", 120)), 45),
+            "TEMPERATURE": 0.1,
+            "MAX_TOKENS": 1200,
+            "NUM_RETRIES": 1,
+            "FALLBACK_MODELS": [],
+        }
+    )
+
+    payload = [{"index": idx, "title": text} for idx, text in enumerate(titles)]
+    system_prompt = (
+        "你是科技媒体编辑。请把英文新闻标题翻译为自然、简洁、准确的中文标题，"
+        "品牌名、产品名、模型名保留原文。只输出 JSON。"
+    )
+    user_prompt = (
+        "输入标题列表：\n"
+        f"{json.dumps(payload, ensure_ascii=False)}\n\n"
+        "请输出：{\"translations\":[{\"index\":0,\"display_title\":\"中文标题\"}]}"
+    )
+
+    try:
+        raw = ai_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+        )
+        parsed = _parse_json_response(raw)
+        rows = parsed.get("translations", []) if isinstance(parsed, dict) else []
+        by_index: Dict[int, str] = {}
+        for row in rows:
+            try:
+                idx = int(row.get("index"))
+            except Exception:
+                continue
+            title = _normalize_text(str(row.get("display_title", "")))
+            if title:
+                by_index[idx] = title
+        return [by_index.get(i, "") for i in range(len(titles))]
+    except Exception:
+        return []
+
+
+def _ensure_chinese_display_titles(
+    items: List[Dict[str, Any]],
+    assistant_settings: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    if not items:
+        return items
+
+    english_indices: List[int] = []
+    english_titles: List[str] = []
+    for idx, item in enumerate(items):
+        display_title = str(item.get("display_title") or item.get("title") or "")
+        if _is_likely_english_title(display_title):
+            english_indices.append(idx)
+            english_titles.append(display_title)
+
+    translated_titles = _translate_titles_to_chinese(english_titles, assistant_settings=assistant_settings)
+
+    for offset, item_index in enumerate(english_indices):
+        item = items[item_index]
+        translated = translated_titles[offset] if offset < len(translated_titles) else ""
+        if not translated or not _contains_cjk(translated):
+            translated = _fallback_translate_title_to_chinese(str(item.get("display_title") or item.get("title") or ""))
+        item["display_title"] = translated
+        if not item.get("original_title"):
+            item["original_title"] = item.get("title") or translated
+
+    return items
+
+
 def _focus_topic_hit(text: str, focus_keywords: List[str]) -> bool:
     weak_tokens = {"ai", "人工智能"}
     normalized = [str(keyword).strip() for keyword in focus_keywords if str(keyword).strip()]
@@ -450,6 +691,50 @@ def _focus_topic_hit(text: str, focus_keywords: List[str]) -> bool:
     ):
         return True
     return False
+
+
+def _compute_editorial_importance(
+    title: str,
+    source_name: str,
+    source_id: str,
+    source_type: str,
+    rank: int = 50,
+    source_priority: Optional[Dict[str, Any]] = None,
+) -> float:
+    title_text = _normalize_text(title)
+    source_blob = f"{source_name} {source_id}"
+
+    authority_score = _score_by_pattern_rules(source_blob, AUTHORITY_SOURCE_RULES)
+    noise_source_penalty = _score_by_pattern_rules(source_blob, NOISE_SOURCE_RULES)
+    focus_hit = _focus_topic_hit(title_text, FOCUS_TOPIC_KEYWORDS)
+    frontier_hit = _contains_any(title_text, FRONTIER_TECH_KEYWORDS)
+    strong_ai_hit = _contains_any(title_text, AI_KEYWORDS)
+    sensational_hit = _contains_any(title_text, SENSATIONAL_NOISE_KEYWORDS)
+    social_noise_hit = _contains_any(title_text, SOCIAL_NOISE_KEYWORDS)
+
+    topic_score = 0.0
+    if focus_hit:
+        topic_score += 20.0
+    if frontier_hit:
+        topic_score += 14.0
+    if strong_ai_hit:
+        topic_score += 8.0
+
+    rank_bonus = max(0.0, 12.0 - min(float(rank), 12.0))
+    source_type_bonus = 8.0 if source_type == "rss" else 0.0
+    priority_boost = _source_priority_boost(source_name, source_id, source_priority) * 0.8
+
+    penalty = 0.0
+    penalty += abs(noise_source_penalty) if noise_source_penalty < 0 else 0.0
+    if sensational_hit:
+        penalty += 24.0
+    if social_noise_hit and not focus_hit:
+        penalty += 26.0
+    if source_type == "hotlist" and authority_score < 20.0:
+        penalty += 10.0
+
+    raw_score = 18.0 + authority_score + topic_score + rank_bonus + source_type_bonus + priority_boost - penalty
+    return max(0.0, min(100.0, raw_score))
 
 
 def _source_priority_boost(source_name: str, source_id: str, source_priority: Optional[Dict[str, Any]] = None) -> float:
@@ -482,6 +767,18 @@ def _contains_cjk(text: str) -> bool:
 def _match_any_pattern(text: str, patterns: List[str]) -> bool:
     lowered = (text or "").lower()
     return any(pattern and str(pattern).lower() in lowered for pattern in patterns)
+
+
+def _score_by_pattern_rules(text: str, rules: List[Tuple[str, float]]) -> float:
+    normalized = (text or "").lower()
+    score = 0.0
+    for pattern, weight in rules:
+        if pattern and str(pattern).lower() in normalized:
+            if weight >= 0:
+                score = max(score, float(weight))
+            else:
+                score += float(weight)
+    return score
 
 
 def _source_mix_config(assistant_settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -526,9 +823,9 @@ def _compute_mix_targets(total: int, mix_cfg: Dict[str, Any]) -> Dict[str, int]:
         return {bucket: 0 for bucket in SOURCE_MIX_BUCKETS}
 
     weights = {
-        "english_authority": max(0.0, float(mix_cfg.get("english_authority", 0.45))),
-        "chinese_ai_tech": max(0.0, float(mix_cfg.get("chinese_ai_tech", 0.35))),
-        "hotlist_trend": max(0.0, float(mix_cfg.get("hotlist_trend", 0.20))),
+        "english_authority": max(0.0, float(mix_cfg.get("english_authority", 0.55))),
+        "chinese_ai_tech": max(0.0, float(mix_cfg.get("chinese_ai_tech", 0.30))),
+        "hotlist_trend": max(0.0, float(mix_cfg.get("hotlist_trend", 0.15))),
     }
     denominator = sum(weights.values()) or 1.0
     normalized = {bucket: value / denominator for bucket, value in weights.items()}
@@ -815,8 +1112,14 @@ def _collect_from_sqlite(
                     source_id = row["source_id"] or "unknown"
                     url = row["mobile_url"] or row["url"] or ""
                     image_url = ""
-                    importance_hint = float(max(0, 100 - int(row["rank"] or 50)))
-                    importance_hint += _source_priority_boost(source_name, source_id, source_priority)
+                    importance_hint = _compute_editorial_importance(
+                        title=title,
+                        source_name=source_name,
+                        source_id=source_id,
+                        source_type="hotlist",
+                        rank=int(row["rank"] or 50),
+                        source_priority=source_priority,
+                    )
                     candidates.append(
                         DigestCandidate(
                             item_id=_make_item_id(source_type, source_id, url, title),
@@ -848,8 +1151,14 @@ def _collect_from_sqlite(
                     url = row["url"] or ""
                     image_url = ""
                     summary = _truncate(row["summary"] or title, 220)
-                    importance_hint = 70.0 if _is_ai_related(title, source_name, source_id, {"platform_ids": [], "rss_ids": []}) else 40.0
-                    importance_hint += _source_priority_boost(source_name, source_id, source_priority)
+                    importance_hint = _compute_editorial_importance(
+                        title=title,
+                        source_name=source_name,
+                        source_id=source_id,
+                        source_type="rss",
+                        rank=50,
+                        source_priority=source_priority,
+                    )
                     candidates.append(
                         DigestCandidate(
                             item_id=_make_item_id(source_type, source_id, url, title),
@@ -1435,6 +1744,7 @@ def build_daily_digest(
 
     normalized_items.sort(key=lambda x: float(x.get("importance", 0)), reverse=True)
     normalized_items = normalized_items[:max_items]
+    normalized_items = _ensure_chinese_display_titles(normalized_items, assistant_settings=assistant_settings)
 
     if not result.get("themes"):
         result["themes"] = _derive_themes_from_candidates([candidate_map[item["item_id"]] for item in normalized_items if item.get("item_id") in candidate_map])
