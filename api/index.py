@@ -11,8 +11,8 @@ from urllib.parse import parse_qs
 from trendradar.assistant.digest import build_daily_digest, build_reading_log_draft, load_assistant_settings, render_report_html
 from trendradar.assistant.storage import AssistantStorage
 
-_storage = AssistantStorage()
-_assistant_settings = load_assistant_settings()
+_storage: AssistantStorage | None = None
+_assistant_settings: Dict[str, Any] | None = None
 
 
 def _json_response(payload: Dict[str, Any], status: str = "200 OK") -> Tuple[str, List[Tuple[str, str]], bytes]:
@@ -47,12 +47,21 @@ def _read_json_body(environ: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
 
-def _ensure_latest_report() -> Dict[str, Any]:
-    report = _storage.get_latest_report()
+def _runtime_context() -> Tuple[AssistantStorage, Dict[str, Any]]:
+    global _storage, _assistant_settings
+    if _assistant_settings is None:
+        _assistant_settings = load_assistant_settings()
+    if _storage is None:
+        _storage = AssistantStorage()
+    return _storage, _assistant_settings
+
+
+def _ensure_latest_report(storage: AssistantStorage, assistant_settings: Dict[str, Any]) -> Dict[str, Any]:
+    report = storage.get_latest_report()
     if not report:
-        report = build_daily_digest(assistant_settings=_assistant_settings, storage=_storage)
-    report["bookmarks"] = _storage.list_bookmarks()
-    report["logs"] = _storage.list_reading_logs()
+        report = build_daily_digest(assistant_settings=assistant_settings, storage=storage)
+    report["bookmarks"] = storage.list_bookmarks()
+    report["logs"] = storage.list_reading_logs()
     return report
 
 
@@ -80,6 +89,7 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
     method = str(environ.get("REQUEST_METHOD", "GET")).upper()
     path = environ.get("PATH_INFO", "/") or "/"
     query = parse_qs(environ.get("QUERY_STRING", ""))
+    storage, assistant_settings = _runtime_context()
 
     status = "404 Not Found"
     headers: List[Tuple[str, str]]
@@ -87,25 +97,25 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
 
     if method == "GET":
         if path in {"/", "/index.html"}:
-            report = _ensure_latest_report()
+            report = _ensure_latest_report(storage, assistant_settings)
             status, headers, body = _html_response(render_report_html(report))
         elif path == "/api/health":
             status, headers, body = _json_response({"ok": True})
         elif path == "/api/latest":
-            status, headers, body = _json_response({"ok": True, "report": _ensure_latest_report()})
+            status, headers, body = _json_response({"ok": True, "report": _ensure_latest_report(storage, assistant_settings)})
         elif path == "/api/reports":
-            status, headers, body = _json_response({"ok": True, "reports": _storage.list_reports()})
+            status, headers, body = _json_response({"ok": True, "reports": storage.list_reports()})
         elif path == "/api/bookmarks":
-            status, headers, body = _json_response({"ok": True, "bookmarks": _storage.list_bookmarks()})
+            status, headers, body = _json_response({"ok": True, "bookmarks": storage.list_bookmarks()})
         elif path == "/api/logs":
             item_id = (query.get("item_id") or [None])[0]
-            status, headers, body = _json_response({"ok": True, "logs": _storage.list_reading_logs(item_id=item_id)})
+            status, headers, body = _json_response({"ok": True, "logs": storage.list_reading_logs(item_id=item_id)})
         elif path == "/api/item":
             item_id = (query.get("item_id") or [None])[0]
             if not item_id:
                 status, headers, body = _json_response({"ok": False, "error": "missing item_id"}, status="400 Bad Request")
             else:
-                report = _ensure_latest_report()
+                report = _ensure_latest_report(storage, assistant_settings)
                 item = _find_item_in_report(item_id, report)
                 if not item:
                     status, headers, body = _json_response({"ok": False, "error": "item not found"}, status="404 Not Found")
@@ -114,15 +124,15 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
                         {
                             "ok": True,
                             "item": item,
-                            "bookmark": _storage.get_bookmark(item_id),
-                            "logs": _storage.list_reading_logs(item_id=item_id),
+                            "bookmark": storage.get_bookmark(item_id),
+                            "logs": storage.list_reading_logs(item_id=item_id),
                         }
                     )
         elif path == "/api/generate":
-            report = build_daily_digest(assistant_settings=_assistant_settings, storage=_storage)
+            report = build_daily_digest(assistant_settings=assistant_settings, storage=storage)
             status, headers, body = _json_response({"ok": True, "report": report})
         elif path == "/latest-report.html":
-            report_path = _storage.data_dir / "latest-report.html"
+            report_path = storage.data_dir / "latest-report.html"
             if report_path.exists():
                 status, headers, body = _html_response(report_path.read_text(encoding="utf-8"))
             else:
@@ -145,7 +155,7 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
             except Exception as exc:
                 status, headers, body = _json_response({"ok": False, "error": f"抓取失败: {exc}"}, status="500 Internal Server Error")
             else:
-                report = build_daily_digest(assistant_settings=_assistant_settings, storage=_storage)
+                report = build_daily_digest(assistant_settings=assistant_settings, storage=storage)
                 elapsed_seconds = max(1, round(time.time() - started_at))
                 status, headers, body = _json_response(
                     {"ok": True, "crawl": crawl_result, "report": report, "elapsed_seconds": elapsed_seconds}
@@ -159,7 +169,7 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
             if isinstance(bookmarked, str):
                 bookmarked = bookmarked.strip().lower() in {"1", "true", "yes", "on"}
 
-            report = _ensure_latest_report()
+            report = _ensure_latest_report(storage, assistant_settings)
             item = _find_item_in_report(item_id, report)
             if item_id and not item:
                 item = {"item_id": item_id, "report_id": report_id or report.get("report_id", ""), "title": title or item_id}
@@ -169,12 +179,12 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
                 item["report_id"] = report_id or report.get("report_id", "")
                 item["title"] = title or item.get("title", "")
                 if bookmarked is False:
-                    result = _storage.remove_bookmark(item["item_id"])
+                    result = storage.remove_bookmark(item["item_id"])
                 elif bookmarked is True:
-                    result = _storage.set_bookmark(item, note=note)
+                    result = storage.set_bookmark(item, note=note)
                 else:
-                    existing = _storage.get_bookmark(item["item_id"])
-                    result = _storage.remove_bookmark(item["item_id"]) if existing else _storage.set_bookmark(item, note=note)
+                    existing = storage.get_bookmark(item["item_id"])
+                    result = storage.remove_bookmark(item["item_id"]) if existing else storage.set_bookmark(item, note=note)
                 status, headers, body = _json_response({"ok": True, **result})
         elif path == "/api/logs":
             item_id = payload.get("item_id")
@@ -187,7 +197,7 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
                     status="400 Bad Request",
                 )
             else:
-                report = _ensure_latest_report()
+                report = _ensure_latest_report(storage, assistant_settings)
                 item = _find_item_in_report(item_id, report) or {
                     "item_id": item_id,
                     "report_id": report.get("report_id", ""),
@@ -196,13 +206,13 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
                 item["report_id"] = report.get("report_id", "")
                 item["draft_text"] = draft_text
                 item["draft_title"] = log_title
-                status, headers, body = _json_response({"ok": True, **_storage.add_reading_log(item, log_text, log_title=log_title)})
+                status, headers, body = _json_response({"ok": True, **storage.add_reading_log(item, log_text, log_title=log_title)})
         elif path == "/api/log-draft":
             item_id = payload.get("item_id")
             if not item_id:
                 status, headers, body = _json_response({"ok": False, "error": "missing item_id"}, status="400 Bad Request")
             else:
-                report = _ensure_latest_report()
+                report = _ensure_latest_report(storage, assistant_settings)
                 item = _find_item_in_report(item_id, report)
                 if not item:
                     status, headers, body = _json_response({"ok": False, "error": "item not found"}, status="404 Not Found")
@@ -210,12 +220,12 @@ def app(environ: Dict[str, Any], start_response) -> Iterable[bytes]:
                     draft = build_reading_log_draft(
                         item=item,
                         report=report,
-                        existing_logs=_storage.list_reading_logs(item_id=item_id),
-                        assistant_settings=_assistant_settings,
+                        existing_logs=storage.list_reading_logs(item_id=item_id),
+                        assistant_settings=assistant_settings,
                     )
                     status, headers, body = _json_response({"ok": True, "draft": draft})
         elif path == "/api/generate":
-            report = build_daily_digest(assistant_settings=_assistant_settings, storage=_storage)
+            report = build_daily_digest(assistant_settings=assistant_settings, storage=storage)
             status, headers, body = _json_response({"ok": True, "report": report})
         else:
             status, headers, body = _json_response({"ok": False, "error": "not found"}, status="404 Not Found")
