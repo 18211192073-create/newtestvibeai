@@ -500,8 +500,9 @@ def load_assistant_settings(path: str = "config/assistant.yaml") -> Dict[str, An
             "dashboard_url": "http://127.0.0.1:8080",
         },
         "ai": {
-            "model": "openai/doubao-seed-2-0-code-preview-260215",
+            "model": "openai/doubao-seed-2-0-lite-260215",
             "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+            "api_mode": "responses",
             "api_key_env": "VOLC_API_KEY",
             "temperature": 0.35,
             "max_tokens": 3500,
@@ -620,9 +621,10 @@ def _translate_titles_to_chinese(titles: List[str], assistant_settings: Optional
 
     ai_client = AIClient(
         {
-            "MODEL": ai_cfg.get("model", "openai/doubao-seed-2-0-code-preview-260215"),
+            "MODEL": ai_cfg.get("model", "openai/doubao-seed-2-0-lite-260215"),
             "API_KEY": api_key,
             "API_BASE": ai_cfg.get("api_base", "https://ark.cn-beijing.volces.com/api/v3"),
+            "API_MODE": ai_cfg.get("api_mode", "responses"),
             "TIMEOUT": min(int(ai_cfg.get("timeout", 120)), 45),
             "TEMPERATURE": 0.1,
             "MAX_TOKENS": 1200,
@@ -1523,9 +1525,10 @@ def build_reading_log_draft(
 
     ai_client = AIClient(
         {
-            "MODEL": reading_cfg.get("model", assistant_settings.get("ai", {}).get("model", "openai/doubao-seed-2-0-code-preview-260215")),
+            "MODEL": reading_cfg.get("model", assistant_settings.get("ai", {}).get("model", "openai/doubao-seed-2-0-lite-260215")),
             "API_KEY": api_key,
             "API_BASE": reading_cfg.get("api_base", assistant_settings.get("ai", {}).get("api_base", "https://ark.cn-beijing.volces.com/api/v3")),
+            "API_MODE": reading_cfg.get("api_mode", assistant_settings.get("ai", {}).get("api_mode", "responses")),
             "TIMEOUT": reading_cfg.get("timeout", assistant_settings.get("ai", {}).get("timeout", 120)),
             "TEMPERATURE": reading_cfg.get("temperature", 0.55),
             "MAX_TOKENS": reading_cfg.get("max_tokens", 1800),
@@ -1622,9 +1625,10 @@ def build_daily_digest(
     else:
         ai_client = AIClient(
             {
-                "MODEL": ai_cfg.get("model", "openai/doubao-seed-2-0-code-preview-260215"),
+                "MODEL": ai_cfg.get("model", "openai/doubao-seed-2-0-lite-260215"),
                 "API_KEY": api_key,
                 "API_BASE": ai_cfg.get("api_base", "https://ark.cn-beijing.volces.com/api/v3"),
+                "API_MODE": ai_cfg.get("api_mode", "responses"),
                 "TIMEOUT": ai_cfg.get("timeout", 120),
                 "TEMPERATURE": ai_cfg.get("temperature", 0.35),
                 "MAX_TOKENS": ai_cfg.get("max_tokens", 3500),

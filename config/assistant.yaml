@@ -211,9 +211,10 @@ feishu:
   dashboard_url: "http://127.0.0.1:8080"
 
 ai:
-  # Ark OpenAI 兼容接口
-  model: "openai/doubao-seed-2-0-code-preview-260215"
+  # Ark Responses 接口
+  model: "openai/doubao-seed-2-0-lite-260215"
   api_base: "https://ark.cn-beijing.volces.com/api/v3"
+  api_mode: "responses"
   api_key_env: "VOLC_API_KEY"
   temperature: 0.35
   max_tokens: 3500

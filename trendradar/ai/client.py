@@ -9,6 +9,7 @@ AI 客户端模块
 import os
 from typing import Any, Dict, List
 
+import requests
 from litellm import completion
 
 
@@ -33,6 +34,7 @@ class AIClient:
         self.model = config.get("MODEL", "deepseek/deepseek-chat")
         self.api_key = config.get("API_KEY") or os.environ.get("AI_API_KEY", "")
         self.api_base = config.get("API_BASE", "")
+        self.api_mode = (config.get("API_MODE") or os.environ.get("AI_API_MODE", "chat_completions")).strip().lower()
         self.temperature = config.get("TEMPERATURE", 1.0)
         self.max_tokens = config.get("MAX_TOKENS", 5000)
         self.timeout = config.get("TIMEOUT", 120)
@@ -57,6 +59,9 @@ class AIClient:
         Raises:
             Exception: API 调用失败时抛出异常
         """
+        if self.api_mode == "responses":
+            return self._chat_via_responses(messages, **kwargs)
+
         # 构建请求参数
         params = {
             "model": self.model,
@@ -99,6 +104,86 @@ class AIClient:
                 item.get("text", str(item)) if isinstance(item, dict) else str(item)
                 for item in content
             )
+        return content or ""
+
+    @staticmethod
+    def _resolve_model_name(model: str) -> str:
+        if "/" in model:
+            return model.split("/", 1)[1]
+        return model
+
+    @staticmethod
+    def _to_responses_input(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        converted: List[Dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        item_type = item.get("type")
+                        if item_type in {"input_text", "input_image", "input_audio"}:
+                            parts.append(item)
+                        elif item_type == "image_url":
+                            image_url = item.get("image_url")
+                            url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url or "")
+                            if url:
+                                parts.append({"type": "input_image", "image_url": url})
+                        elif item_type == "text":
+                            parts.append({"type": "input_text", "text": str(item.get("text", ""))})
+                        else:
+                            parts.append({"type": "input_text", "text": str(item)})
+                    else:
+                        parts.append({"type": "input_text", "text": str(item)})
+            else:
+                parts = [{"type": "input_text", "text": str(content)}]
+            converted.append({"role": role, "content": parts})
+        return converted
+
+    @staticmethod
+    def _extract_responses_text(payload: Dict[str, Any]) -> str:
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text.strip()
+
+        chunks: List[str] = []
+        for output_item in payload.get("output", []) or []:
+            for content_item in output_item.get("content", []) or []:
+                text = content_item.get("text") or content_item.get("output_text")
+                if text:
+                    chunks.append(str(text))
+        return "\n".join(chunks).strip()
+
+    def _chat_via_responses(self, messages: List[Dict[str, Any]], **kwargs) -> str:
+        if not self.api_base:
+            raise ValueError("responses 模式需要配置 API_BASE")
+        if not self.api_key:
+            raise ValueError("responses 模式需要配置 API_KEY")
+
+        url = self.api_base.rstrip("/") + "/responses"
+        payload: Dict[str, Any] = {
+            "model": self._resolve_model_name(self.model),
+            "input": self._to_responses_input(messages),
+            "temperature": kwargs.get("temperature", self.temperature),
+        }
+
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+        if max_tokens and max_tokens > 0:
+            payload["max_output_tokens"] = max_tokens
+
+        response = requests.post(
+            url=url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=kwargs.get("timeout", self.timeout),
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = self._extract_responses_text(data)
         return content or ""
 
     def validate_config(self) -> tuple[bool, str]:
