@@ -4,6 +4,7 @@
 实现系统状态查询和爬虫触发功能。
 """
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -29,6 +30,14 @@ class SystemManagementTools:
             # 获取项目根目录
             current_file = Path(__file__)
             self.project_root = current_file.parent.parent.parent
+
+    def _resolve_crawl_data_dir(self) -> Path:
+        configured = os.environ.get("DAY_VIBE_CRAWL_DIR", "").strip()
+        if configured:
+            return Path(configured)
+        if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+            return Path("/tmp/day-vibe-ai/output")
+        return self.project_root / "output"
 
     def get_system_status(self) -> Dict:
         """
@@ -247,8 +256,10 @@ class SystemManagementTools:
             )
 
             storage = LocalStorageBackend(
-                data_dir=str(self.project_root / "output"),
-                enable_txt=True, enable_html=True, timezone=timezone
+                data_dir=str(self._resolve_crawl_data_dir()),
+                enable_txt=True,
+                enable_html=True,
+                timezone=timezone,
             )
 
             rss_result = None

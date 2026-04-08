@@ -429,6 +429,15 @@ def _assistant_output_dir() -> Path:
     return Path(os.environ.get("DAY_VIBE_DATA_DIR", "output/assistant"))
 
 
+def _crawl_output_dir() -> Path:
+    configured = os.environ.get("DAY_VIBE_CRAWL_DIR", "").strip()
+    if configured:
+        return Path(configured)
+    if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+        return Path("/tmp/day-vibe-ai/output")
+    return Path("output")
+
+
 @dataclass
 class DigestCandidate:
     item_id: str
@@ -1193,7 +1202,7 @@ def collect_candidates(lookback_hours: int = 24, assistant_settings: Optional[Di
     source_priority = assistant_settings.get("source_priority", {}) or {}
     now = datetime.now()
     cutoff = now - timedelta(hours=lookback_hours)
-    output_dir = Path("output")
+    output_dir = _crawl_output_dir()
     candidates: List[DigestCandidate] = []
 
     for db_path in sorted((output_dir / "news").glob("*.db")):
